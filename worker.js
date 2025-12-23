@@ -1,158 +1,160 @@
 export default {
   async fetch(request, env) {
-    /* ===================== CORS ===================== */
+    const CORS_HEADERS = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Content-Type": "application/json"
+    };
+
+    // CORS preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, {
-        headers: corsHeaders()
-      });
+      return new Response(null, { headers: CORS_HEADERS });
     }
 
-    if (request.method !== "POST") {
-      return json({
-        ok: false,
-        error: "POST only"
-      });
-    }
-
-    let data;
     try {
-      data = await request.json();
-    } catch {
-      return json({
-        ok: false,
-        error: "Invalid JSON body"
-      });
+      if (request.method !== "POST") {
+        return new Response(
+          JSON.stringify({ ok: false, error: "POST only" }),
+          { headers: CORS_HEADERS }
+        );
+      }
+
+      const data = await request.json();
+
+      // ==============================
+      // CONFIG
+      // ==============================
+      const ADMIN_PASSWORD = env.ADMIN_PASSWORD; // Cloudflare secret
+      const KV = env.CODES; // KV namespace binding name
+
+      // ==============================
+      // ADMIN LOGIN
+      // ==============================
+      if (data.action === "admin_login") {
+        if (!data.password) {
+          return json({ ok: false, error: "Password required" }, CORS_HEADERS);
+        }
+
+        if (data.password !== ADMIN_PASSWORD) {
+          return json({ ok: false, error: "Invalid admin password" }, CORS_HEADERS);
+        }
+
+        return json({ ok: true }, CORS_HEADERS);
+      }
+
+      // ==============================
+      // ADD ACTIVATION CODE (ADMIN)
+      // ==============================
+      if (data.action === "add") {
+        if (data.admin !== ADMIN_PASSWORD) {
+          return json({ ok: false, error: "Unauthorized" }, CORS_HEADERS);
+        }
+
+        if (!data.code) {
+          return json({ ok: false, error: "Code required" }, CORS_HEADERS);
+        }
+
+        await KV.put(data.code, JSON.stringify({
+          used: false,
+          created: Date.now()
+        }));
+
+        return json({ ok: true, added: data.code }, CORS_HEADERS);
+      }
+
+      // ==============================
+      // VERIFY ACTIVATION CODE (USER)
+      // ==============================
+      if (data.action === "verify") {
+        if (!data.code) {
+          return json({ ok: false, error: "Code required" }, CORS_HEADERS);
+        }
+
+        const record = await KV.get(data.code);
+
+        if (!record) {
+          return json({ ok: false, error: "Invalid code" }, CORS_HEADERS);
+        }
+
+        const parsed = JSON.parse(record);
+
+        if (parsed.used === true) {
+          return json({ ok: false, used: true }, CORS_HEADERS);
+        }
+
+        // Mark as used immediately
+        parsed.used = true;
+        parsed.usedAt = Date.now();
+        await KV.put(data.code, JSON.stringify(parsed));
+
+        return json({ ok: true }, CORS_HEADERS);
+      }
+
+      // ==============================
+      // LIST CODES (ADMIN)
+      // ==============================
+      if (data.action === "list") {
+        if (data.admin !== ADMIN_PASSWORD) {
+          return json({ ok: false, error: "Unauthorized" }, CORS_HEADERS);
+        }
+
+        const list = await KV.list();
+        const result = [];
+
+        for (const key of list.keys) {
+          const value = await KV.get(key.name);
+          result.push({
+            code: key.name,
+            ...JSON.parse(value)
+          });
+        }
+
+        return json({ ok: true, codes: result }, CORS_HEADERS);
+      }
+
+      // ==============================
+      // DISABLE CODE (ADMIN)
+      // ==============================
+      if (data.action === "disable") {
+        if (data.admin !== ADMIN_PASSWORD) {
+          return json({ ok: false, error: "Unauthorized" }, CORS_HEADERS);
+        }
+
+        if (!data.code) {
+          return json({ ok: false, error: "Code required" }, CORS_HEADERS);
+        }
+
+        const record = await KV.get(data.code);
+        if (!record) {
+          return json({ ok: false, error: "Code not found" }, CORS_HEADERS);
+        }
+
+        const parsed = JSON.parse(record);
+        parsed.used = true;
+        parsed.disabled = true;
+        await KV.put(data.code, JSON.stringify(parsed));
+
+        return json({ ok: true, disabled: data.code }, CORS_HEADERS);
+      }
+
+      // ==============================
+      // UNKNOWN ACTION
+      // ==============================
+      return json({ ok: false, error: "Invalid action" }, CORS_HEADERS);
+
+    } catch (err) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err.message }),
+        { headers: CORS_HEADERS }
+      );
     }
-
-    const action = data.action;
-
-    /* ===================== VERIFY ===================== */
-    if (action === "verify") {
-      const code = normalize(data.code);
-      if (!code) {
-        return json({
-          ok: false,
-          error: "Code missing"
-        });
-      }
-
-      const used = await env.CODES.get(code);
-      if (used === "used") {
-        return json({
-          ok: false,
-          used: true,
-          error: "Code already used"
-        });
-      }
-
-      if (used === null) {
-        return json({
-          ok: false,
-          error: "Invalid code"
-        });
-      }
-
-      await env.CODES.put(code, "used");
-
-      return json({
-        ok: true,
-        activated: true
-      });
-    }
-
-    /* ===================== ADMIN LOGIN ===================== */
-    if (action === "admin_login") {
-      if (data.password !== env.ADMIN_PASSWORD) {
-        return json({
-          ok: false,
-          error: "Wrong admin password"
-        });
-      }
-
-      return json({
-        ok: true,
-        admin: true
-      });
-    }
-
-    /* ===================== ADMIN ADD CODE ===================== */
-    if (action === "add") {
-      if (data.password !== env.ADMIN_PASSWORD) {
-        return json({
-          ok: false,
-          error: "Unauthorized"
-        });
-      }
-
-      const code = normalize(data.code);
-      if (!code) {
-        return json({
-          ok: false,
-          error: "Code missing"
-        });
-      }
-
-      await env.CODES.put(code, "unused");
-
-      return json({
-        ok: true,
-        added: code
-      });
-    }
-
-    /* ===================== ADMIN LIST ===================== */
-    if (action === "list") {
-      if (data.password !== env.ADMIN_PASSWORD) {
-        return json({
-          ok: false,
-          error: "Unauthorized"
-        });
-      }
-
-      const list = [];
-      const cursor = env.CODES.list();
-      for await (const k of cursor) {
-        const v = await env.CODES.get(k.name);
-        list.push({
-          code: k.name,
-          status: v
-        });
-      }
-
-      return json({
-        ok: true,
-        codes: list
-      });
-    }
-
-    /* ===================== UNKNOWN ===================== */
-    return json({
-      ok: false,
-      error: "Unknown action"
-    });
   }
 };
 
-/* ===================== HELPERS ===================== */
-
-function json(obj) {
-  return new Response(JSON.stringify(obj), {
-    headers: {
-      "Content-Type": "application/json",
-      ...corsHeaders()
-    }
-  });
-}
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  };
-}
-
-function normalize(v) {
-  if (!v || typeof v !== "string") return null;
-  return v.trim().toUpperCase();
-}
+// ==============================
+// HELPER
+// ==============================
+function json(data, headers) {
+  return new Response(JSON.stringify(data), { headers });
+            }
