@@ -74,4 +74,4 @@ function json(data, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
-}
+                     }
