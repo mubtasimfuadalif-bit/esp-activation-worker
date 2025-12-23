@@ -1,72 +1,62 @@
 export default {
   async fetch(request, env) {
-
     if (request.method !== "POST") {
-      return new Response("Only POST allowed", { status: 405 });
+      return json({ ok: false, error: "POST only" }, 405);
     }
 
-    let data;
+    let body;
     try {
-      data = await request.json();
+      body = await request.json();
     } catch {
-      return new Response(JSON.stringify({
-        ok: false,
-        error: "Invalid JSON"
-      }), { headers: { "Content-Type": "application/json" } });
+      return json({ ok: false, error: "Invalid JSON" });
     }
 
-    const action = data.action;
+    const action = body.action;
+    const code = (body.code || "").trim();
 
-    // ===== VERIFY =====
+    // -----------------------------
+    // VERIFY (User side)
+    // -----------------------------
     if (action === "verify") {
-      const code = (data.code || "").trim();
-      if (!code) {
-        return new Response(JSON.stringify({ ok: false }), { headers: { "Content-Type": "application/json" } });
-      }
+      if (!code) return json({ ok: false, error: "No code" });
 
-      const value = await env.ACTIVATION_CODES.get(code);
+      const value = await env.CODES.get(code);
 
       if (value === null) {
-        return new Response(JSON.stringify({ ok: false }), { headers: { "Content-Type": "application/json" } });
+        return json({ ok: false, error: "Invalid code" });
       }
 
       if (value === "USED") {
-        return new Response(JSON.stringify({ ok: false, used: true }), { headers: { "Content-Type": "application/json" } });
+        return json({ ok: false, used: true });
       }
 
-      await env.ACTIVATION_CODES.put(code, "USED");
-
-      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+      await env.CODES.put(code, "USED");
+      return json({ ok: true });
     }
 
-    // ===== ADD =====
+    // -----------------------------
+    // ADMIN ADD CODE
+    // -----------------------------
     if (action === "add") {
-      if (data.admin !== env.ADMIN_PASSWORD) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: "Unauthorized"
-        }), { headers: { "Content-Type": "application/json" } });
+      const admin = (body.admin || "").trim();
+
+      if (!admin || admin !== env.ADMIN_PASSWORD) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
       }
 
-      const code = (data.code || "").trim();
-      if (!code) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: "No code"
-        }), { headers: { "Content-Type": "application/json" } });
-      }
+      if (!code) return json({ ok: false, error: "No code" });
 
-      await env.ACTIVATION_CODES.put(code, "NEW");
-
-      return new Response(JSON.stringify({
-        ok: true,
-        added: true
-      }), { headers: { "Content-Type": "application/json" } });
+      await env.CODES.put(code, "NEW");
+      return json({ ok: true, added: code });
     }
 
-    return new Response(JSON.stringify({
-      ok: false,
-      error: "Invalid action"
-    }), { headers: { "Content-Type": "application/json" } });
+    return json({ ok: false, error: "Invalid action" });
   }
 };
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
