@@ -1,0 +1,7 @@
+name = "esp-activation-worker"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[[kv_namespaces]]
+binding = "CODES"
+id = "d947769d6a3c4927af86bd417b064246"
