@@ -2,6 +2,6 @@ name = "esp-activation-worker"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
-[[kv_namespaces]]
-binding = "CODES"
-id = "d947769d6a3c4927af86bd417b064246"
+kv_namespaces = [
+  { binding = "CODES", id = "96f0fd8999784f2b94b6c6e726f66ca8" }
+]
