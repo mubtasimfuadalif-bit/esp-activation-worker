@@ -17,7 +17,7 @@ export default {
 
     const action = data.action;
 
-    // ================= VERIFY =================
+    // ===== VERIFY =====
     if (action === "verify") {
       const code = (data.code || "").trim();
       if (!code) {
@@ -39,7 +39,7 @@ export default {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // ================= ADD =================
+    // ===== ADD =====
     if (action === "add") {
       if (data.admin !== env.ADMIN_PASSWORD) {
         return new Response(JSON.stringify({
@@ -64,7 +64,6 @@ export default {
       }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // ================= UNKNOWN =================
     return new Response(JSON.stringify({
       ok: false,
       error: "Invalid action"
