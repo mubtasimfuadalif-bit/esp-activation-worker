@@ -1,71 +1,56 @@
 export default {
   async fetch(request, env) {
-
-    // Only POST allowed
     if (request.method !== "POST") {
-      return new Response("Method Not Allowed", { status: 405 });
+      return new Response("Only POST allowed", { status: 405 });
     }
 
-    let body;
+    let data;
     try {
-      body = await request.json();
+      data = await request.json();
     } catch {
-      return Response.json({ ok: false, error: "Invalid JSON" });
+      return json({ ok: false, error: "Invalid JSON" });
     }
 
-    const action = body.action || "";
-    const code = (body.code || "").trim();
-    const adminPassword = body.adminPassword || "";
+    const action = data.action;
 
-    // =========================
-    // ADMIN PASSWORD (BACKEND ONLY)
-    // =========================
-    const ADMIN_PASSWORD = "ALIF-ESP-D7T5-JON7";
-
-    // =========================
-    // ADMIN: ADD NEW CODE
-    // =========================
-    if (action === "admin_add") {
-      if (adminPassword !== ADMIN_PASSWORD) {
-        return Response.json({ ok: false, error: "Unauthorized" });
-      }
-
-      if (!code) {
-        return Response.json({ ok: false, error: "No code provided" });
-      }
-
-      const exists = await env.CODES.get(code);
-      if (exists) {
-        return Response.json({ ok: false, error: "Code already exists" });
-      }
-
-      await env.CODES.put(code, "UNUSED");
-      return Response.json({ ok: true, added: code });
-    }
-
-    // =========================
-    // USER: VERIFY CODE
-    // =========================
+    // 🔐 VERIFY CODE
     if (action === "verify") {
-      if (!code) {
-        return Response.json({ ok: false, error: "No code" });
+      const code = data.code;
+      if (!code) return json({ ok: false, error: "Code missing" });
+
+      const value = await env.ACTIVATION_CODES.get(code);
+
+      if (!value) {
+        return json({ ok: false });
       }
 
-      const status = await env.CODES.get(code);
-
-      if (status === null) {
-        return Response.json({ ok: false });
+      if (value === "USED") {
+        return json({ ok: false, used: true });
       }
 
-      if (status === "USED") {
-        return Response.json({ ok: false, used: true });
-      }
-
-      // Mark as USED
-      await env.CODES.put(code, "USED");
-      return Response.json({ ok: true });
+      await env.ACTIVATION_CODES.put(code, "USED");
+      return json({ ok: true });
     }
 
-    return Response.json({ ok: false, error: "Invalid action" });
+    // 🛠️ ADD CODE (ADMIN)
+    if (action === "add") {
+      if (data.admin !== env.ADMIN_PASSWORD) {
+        return json({ ok: false, error: "Unauthorized" });
+      }
+
+      const code = data.code;
+      if (!code) return json({ ok: false, error: "Code missing" });
+
+      await env.ACTIVATION_CODES.put(code, "UNUSED");
+      return json({ ok: true, added: true });
+    }
+
+    return json({ ok: false, error: "Invalid action" });
   }
 };
+
+function json(obj) {
+  return new Response(JSON.stringify(obj), {
+    headers: { "Content-Type": "application/json" }
+  });
+  }
