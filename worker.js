@@ -1,44 +1,50 @@
 // =======================================================
 // ESP8266 ACTIVATION & ADMIN WORKER
-// MASTER FINAL VERSION
+// MASTER FINAL — BROWSER + CORS SAFE
 // =======================================================
 
-// --------- HELPERS ----------
+// ---------- RESPONSE HELPER ----------
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS"
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
     }
   });
 }
 
+// ---------- TOKEN ----------
 function randomToken() {
   return crypto.randomUUID() + "-" + Date.now();
 }
 
-// --------- WORKER ----------
+// =======================================================
+// WORKER
+// =======================================================
 export default {
   async fetch(request, env) {
 
-    // ---- CORS preflight ----
+    // ---------- CORS PREFLIGHT ----------
     if (request.method === "OPTIONS") {
       return new Response(null, {
+        status: 204,
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Headers": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS"
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
         }
       });
     }
 
+    // ---------- ONLY POST ----------
     if (request.method !== "POST") {
       return json({ ok: false, error: "Method not allowed" }, 405);
     }
 
+    // ---------- PARSE JSON ----------
     let body;
     try {
       body = await request.json();
@@ -49,33 +55,29 @@ export default {
     const action = body.action;
 
     // ===================================================
-    // 🔐 USER ACTIVATION VERIFY
+    // 🔐 USER: VERIFY ACTIVATION CODE
     // ===================================================
     if (action === "verify") {
 
       const code = (body.code || "").trim();
       if (!code) {
-        return json({ ok: false, error: "No code" });
+        return json({ ok: false, reason: "NO_CODE" });
       }
 
       const status = await env.CODES.get(code);
 
-      // code does not exist
       if (status === null) {
         return json({ ok: false, reason: "INVALID" });
       }
 
-      // already used
       if (status === "USED") {
         return json({ ok: false, reason: "USED" });
       }
 
-      // disabled by admin
       if (status === "DISABLED") {
         return json({ ok: false, reason: "DISABLED" });
       }
 
-      // NEW → USED
       if (status === "NEW") {
         await env.CODES.put(code, "USED");
         return json({ ok: true });
@@ -94,14 +96,14 @@ export default {
         return json({ ok: false });
       }
 
-      // password check (SECRET)
       if (password !== env.ADMIN_PASSWORD) {
         return json({ ok: false });
       }
 
-      // issue token
       const token = randomToken();
-      await env.ADMINS.put(token, "VALID", { expirationTtl: 60 * 60 }); // 1 hour
+      await env.ADMINS.put(token, "VALID", {
+        expirationTtl: 60 * 60 // 1 hour
+      });
 
       return json({ ok: true, token });
     }
@@ -109,7 +111,7 @@ export default {
     // ===================================================
     // 🔒 ADMIN AUTH CHECK
     // ===================================================
-    async function checkAdmin(token) {
+    async function isAdmin(token) {
       if (!token) return false;
       const v = await env.ADMINS.get(token);
       return v === "VALID";
@@ -120,23 +122,22 @@ export default {
     // ===================================================
     if (action === "list") {
 
-      const token = body.token;
-      if (!(await checkAdmin(token))) {
-        return json({ ok: false, error: "Unauthorized" }, 401);
+      if (!(await isAdmin(body.token))) {
+        return json({ ok: false, error: "UNAUTHORIZED" }, 401);
       }
 
-      const list = [];
+      const result = [];
       const all = await env.CODES.list();
 
-      for (const k of all.keys) {
-        const v = await env.CODES.get(k.name);
-        list.push({
-          code: k.name,
+      for (const item of all.keys) {
+        const v = await env.CODES.get(item.name);
+        result.push({
+          code: item.name,
           status: v
         });
       }
 
-      return json({ ok: true, codes: list });
+      return json({ ok: true, codes: result });
     }
 
     // ===================================================
@@ -144,20 +145,18 @@ export default {
     // ===================================================
     if (action === "add") {
 
-      const token = body.token;
-      const code = (body.code || "").trim();
-
-      if (!(await checkAdmin(token))) {
-        return json({ ok: false, error: "Unauthorized" }, 401);
+      if (!(await isAdmin(body.token))) {
+        return json({ ok: false, error: "UNAUTHORIZED" }, 401);
       }
 
+      const code = (body.code || "").trim();
       if (!code) {
-        return json({ ok: false, error: "No code" });
+        return json({ ok: false, error: "NO_CODE" });
       }
 
       const exist = await env.CODES.get(code);
       if (exist !== null) {
-        return json({ ok: false, error: "Already exists" });
+        return json({ ok: false, error: "EXISTS" });
       }
 
       await env.CODES.put(code, "NEW");
@@ -169,20 +168,18 @@ export default {
     // ===================================================
     if (action === "disable") {
 
-      const token = body.token;
-      const code = (body.code || "").trim();
-
-      if (!(await checkAdmin(token))) {
-        return json({ ok: false, error: "Unauthorized" }, 401);
+      if (!(await isAdmin(body.token))) {
+        return json({ ok: false, error: "UNAUTHORIZED" }, 401);
       }
 
+      const code = (body.code || "").trim();
       if (!code) {
-        return json({ ok: false });
+        return json({ ok: false, error: "NO_CODE" });
       }
 
       const exist = await env.CODES.get(code);
       if (exist === null) {
-        return json({ ok: false, error: "Not found" });
+        return json({ ok: false, error: "NOT_FOUND" });
       }
 
       await env.CODES.put(code, "DISABLED");
@@ -192,6 +189,6 @@ export default {
     // ===================================================
     // ❌ UNKNOWN ACTION
     // ===================================================
-    return json({ ok: false, error: "Unknown action" });
+    return json({ ok: false, error: "UNKNOWN_ACTION" });
   }
 };
