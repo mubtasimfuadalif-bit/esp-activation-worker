@@ -1,6 +1,6 @@
 export default {
   async fetch(request, env) {
-
+    // Only POST allowed
     if (request.method !== "POST") {
       return new Response(
         JSON.stringify({ ok: false, error: "Method not allowed" }),
@@ -11,10 +11,10 @@ export default {
     let data;
     try {
       data = await request.json();
-    } catch {
+    } catch (e) {
       return new Response(
         JSON.stringify({ ok: false, error: "Invalid JSON" }),
-        { headers: { "Content-Type": "application/json" } }
+        { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
@@ -22,13 +22,15 @@ export default {
 
     if (!code) {
       return new Response(
-        JSON.stringify({ ok: false, error: "No code provided" }),
-        { headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ ok: false, error: "Empty code" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
+    // Read from KV
     const value = await env.CODES.get(code);
 
+    // Code not found
     if (value === null) {
       return new Response(
         JSON.stringify({ ok: false }),
@@ -36,6 +38,7 @@ export default {
       );
     }
 
+    // Already used
     if (value === "USED") {
       return new Response(
         JSON.stringify({ ok: false, used: true }),
@@ -43,6 +46,7 @@ export default {
       );
     }
 
+    // Mark as used
     await env.CODES.put(code, "USED");
 
     return new Response(
