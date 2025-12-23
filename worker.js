@@ -1,59 +1,77 @@
 export default {
   async fetch(request, env) {
-
     // Only POST allowed
     if (request.method !== "POST") {
-      return new Response(
-        JSON.stringify({ ok: false, error: "METHOD_NOT_ALLOWED" }),
-        { status: 405, headers: { "Content-Type": "application/json" } }
-      );
+      return new Response("Method Not Allowed", { status: 405 });
     }
 
-    // Parse JSON safely
-    let data;
+    let body;
     try {
-      data = await request.json();
-    } catch (e) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "INVALID_JSON" }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
     }
 
-    const code = (data.code || "").trim();
+    const { action, code, adminPassword } = body;
 
-    if (!code) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "NO_CODE" }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+    // ---------- USER: VERIFY ACTIVATION CODE ----------
+    if (action === "verify") {
+      if (!code || typeof code !== "string") {
+        return json({ ok: false, error: "No code provided" }, 400);
+      }
+
+      const value = await env.CODES.get(code);
+
+      if (value === null) {
+        return json({ ok: false, error: "Invalid code" });
+      }
+
+      if (value === "USED") {
+        return json({ ok: false, used: true });
+      }
+
+      await env.CODES.put(code, "USED");
+      return json({ ok: true });
     }
 
-    // Check KV
-    const value = await env.CODES.get(code);
+    // ---------- ADMIN AUTH ----------
+    if (action === "admin") {
+      if (!adminPassword || adminPassword !== env.ADMIN_PASSWORD) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
 
-    // Code not found
-    if (value === null) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "INVALID_CODE" }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+      // Add new activation code
+      if (body.subAction === "add") {
+        const newCode = body.newCode;
+        if (!newCode) {
+          return json({ ok: false, error: "No code provided" });
+        }
+
+        await env.CODES.put(newCode, "UNUSED");
+        return json({ ok: true, added: newCode });
+      }
+
+      // Check status of a code
+      if (body.subAction === "check") {
+        const checkCode = body.checkCode;
+        const status = await env.CODES.get(checkCode);
+        return json({
+          ok: true,
+          code: checkCode,
+          status: status || "NOT_FOUND",
+        });
+      }
+
+      return json({ ok: false, error: "Unknown admin action" }, 400);
     }
 
-    // Already used
-    if (value === "USED") {
-      return new Response(
-        JSON.stringify({ ok: false, used: true }),
-        { headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Mark as USED
-    await env.CODES.put(code, "USED");
-
-    return new Response(
-      JSON.stringify({ ok: true }),
-      { headers: { "Content-Type": "application/json" } }
-    );
-  }
+    return json({ ok: false, error: "Unknown action" }, 400);
+  },
 };
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
